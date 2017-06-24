@@ -74,6 +74,19 @@ establish_carrier() {
   echo -n "${handle}"
 }
 
+set_root_directory() {
+  local rootdir="$1"
+  if [[ -z ${rootdir} ]]; then
+    rootdir="/var/tmp/basecamp"
+  fi
+  mkdir -p ${rootdir}
+}
+
+move_to_root_directory() {
+  local rootdir="$1"
+  pushd ${rootdir} >/dev/null
+}
+
 dismantle_httpd() {
   local readonly port="$1"
   local pid
@@ -84,6 +97,29 @@ dismantle_httpd() {
   kill ${pid}
 }
 
+start_http_server() {
+  local listen="$1"
+  python <<EOT >/dev/null 2>&1 &
+    import socket
+    from BaseHTTPServer import HTTPServer
+    from SimpleHTTPServer import SimpleHTTPRequestHandler
+
+    class HTTPServerV6(HTTPServer):
+      address_family = socket.AF_INET6
+
+    def main():
+      server = HTTPServerV6(('::', ${listen}), SimpleHTTPRequestHandler)
+      server.serve_forever()
+
+    if __name__ == '__main__':
+      main()
+  EOT
+}
+
+move_back_to_original_directory() {
+  popd >/dev/null 2>&1
+}
+
 launch_httpd() {
 
 local handle="$1"
@@ -91,28 +127,10 @@ local target="$2"
 local rootdir="$3"
 local listen="$(choose_port ${handle} ${target})"
 
-if [[ -z ${rootdir} ]]; then
-  rootdir="/var/tmp/basecamp"
-fi
-
-mkdir -p ${rootdir}
-pushd ${rootdir} >/dev/null
-python <<EOT >/dev/null 2>&1 &
-import socket
-from BaseHTTPServer import HTTPServer
-from SimpleHTTPServer import SimpleHTTPRequestHandler
-
-class HTTPServerV6(HTTPServer):
-  address_family = socket.AF_INET6
-
-def main():
-  server = HTTPServerV6(('::', ${listen}), SimpleHTTPRequestHandler)
-  server.serve_forever()
-
-if __name__ == '__main__':
-  main()
-EOT
-popd >/dev/null 2>&1
+set_root_directory ${rootdir}
+move_to_root_directory ${rootdir}
+start_http_server ${listen}
+move_back_to_original_directory
 
 ssh -O forward -R ${listen}:localhost6:${listen} -S ${handle} ${target}
 echo -n ${listen}
